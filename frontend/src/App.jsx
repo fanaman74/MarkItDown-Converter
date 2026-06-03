@@ -2,6 +2,8 @@ import React, { useState, useEffect, useRef } from 'react';
 
 export default function App() {
   const [directoryHandle, setDirectoryHandle] = useState(null);
+  const [outputStrategy, setOutputStrategy] = useState('inplace'); // 'inplace' (md/) or 'custom' (md_convert/ inside chosen folder)
+  const [outputDirectoryHandle, setOutputDirectoryHandle] = useState(null);
   const [queue, setQueue] = useState([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -32,8 +34,8 @@ export default function App() {
             });
           }
         } else if (entry.kind === 'directory') {
-          // Skip the output 'md' directory to avoid infinite loops or parsing outputs
-          if (entry.name !== 'md') {
+          // Skip output directories to avoid infinite loops or parsing outputs
+          if (entry.name !== 'md' && entry.name !== 'md_convert') {
             await walk(entry, currentPath ? `${currentPath}/${entry.name}` : entry.name);
           }
         }
@@ -44,7 +46,7 @@ export default function App() {
     return list;
   };
 
-  // Open the native browser directory picker
+  // Open the native browser directory picker for source folder
   const selectFolder = async () => {
     try {
       const handle = await window.showDirectoryPicker();
@@ -62,7 +64,20 @@ export default function App() {
     }
   };
 
-  // Helper to resolve nested directories handles inside 'md'
+  // Open the native browser directory picker for custom output folder
+  const selectOutputFolder = async () => {
+    try {
+      const handle = await window.showDirectoryPicker();
+      setOutputDirectoryHandle(handle);
+    } catch (err) {
+      console.error(err);
+      if (err.name !== 'AbortError') {
+        alert('Failed to access destination folder: ' + err.message);
+      }
+    }
+  };
+
+  // Helper to resolve nested directories handles inside root md folder
   const resolveTargetDirHandle = async (rootMdHandle, relativePathDir) => {
     let currentDirHandle = rootMdHandle;
     if (relativePathDir) {
@@ -78,6 +93,12 @@ export default function App() {
   const startConversion = async () => {
     if (queue.length === 0 || !directoryHandle) return;
     
+    // Validate that if custom strategy is selected, a destination folder is set
+    if (outputStrategy === 'custom' && !outputDirectoryHandle) {
+      alert('Please select a top-level destination folder first.');
+      return;
+    }
+
     setIsProcessing(true);
     cancelRef.current = false;
     setCurrentIndex(0);
@@ -85,8 +106,12 @@ export default function App() {
     const updatedQueue = [...queue];
 
     try {
-      // Create or retrieve the 'md' folder inside the selected folder
-      const mdDirHandle = await directoryHandle.getDirectoryHandle('md', { create: true });
+      // Determine the target parent folder and subfolder name based on chosen strategy
+      const parentHandle = outputStrategy === 'custom' ? outputDirectoryHandle : directoryHandle;
+      const targetFolderName = outputStrategy === 'custom' ? 'md_convert' : 'md';
+
+      // Create or retrieve the output folder inside the parent folder
+      const mdDirHandle = await parentHandle.getDirectoryHandle(targetFolderName, { create: true });
 
       for (let i = 0; i < updatedQueue.length; i++) {
         if (cancelRef.current) {
@@ -119,7 +144,7 @@ export default function App() {
           const data = await response.json();
           const markdownContent = data.markdown;
           
-          // Replicate nested subfolders inside 'md'
+          // Replicate nested subfolders inside target directory
           const targetDirHandle = await resolveTargetDirHandle(mdDirHandle, updatedQueue[i].relativePathDir);
 
           // Collision prevention logic inside the specific target subdirectory
@@ -151,7 +176,7 @@ export default function App() {
           updatedQueue[i].status = 'success';
           updatedQueue[i].markdown = markdownContent;
           const relativeSubpath = updatedQueue[i].relativePathDir ? `${updatedQueue[i].relativePathDir}/` : '';
-          updatedQueue[i].savedPath = `${directoryHandle.name}/md/${relativeSubpath}${targetFilename}`;
+          updatedQueue[i].savedPath = `${parentHandle.name}/${targetFolderName}/${relativeSubpath}${targetFilename}`;
         } catch (err) {
           updatedQueue[i].status = 'error';
           updatedQueue[i].errorMsg = err.message || 'Unknown conversion error';
@@ -172,13 +197,21 @@ export default function App() {
     const itemIndex = queue.findIndex(item => item.id === id);
     if (itemIndex === -1 || !directoryHandle) return;
 
+    if (outputStrategy === 'custom' && !outputDirectoryHandle) {
+      alert('Please select a top-level destination folder first.');
+      return;
+    }
+
     const updatedQueue = [...queue];
     updatedQueue[itemIndex].status = 'processing';
     updatedQueue[itemIndex].errorMsg = '';
     setQueue([...updatedQueue]);
 
     try {
-      const mdDirHandle = await directoryHandle.getDirectoryHandle('md', { create: true });
+      const parentHandle = outputStrategy === 'custom' ? outputDirectoryHandle : directoryHandle;
+      const targetFolderName = outputStrategy === 'custom' ? 'md_convert' : 'md';
+      
+      const mdDirHandle = await parentHandle.getDirectoryHandle(targetFolderName, { create: true });
       
       const formData = new FormData();
       formData.append('file', updatedQueue[itemIndex].file);
@@ -196,7 +229,7 @@ export default function App() {
       const data = await response.json();
       const markdownContent = data.markdown;
       
-      // Replicate nested subfolders inside 'md'
+      // Replicate nested subfolders inside target directory
       const targetDirHandle = await resolveTargetDirHandle(mdDirHandle, updatedQueue[itemIndex].relativePathDir);
 
       // Collision prevention logic
@@ -225,7 +258,7 @@ export default function App() {
       updatedQueue[itemIndex].status = 'success';
       updatedQueue[itemIndex].markdown = markdownContent;
       const relativeSubpath = updatedQueue[itemIndex].relativePathDir ? `${updatedQueue[itemIndex].relativePathDir}/` : '';
-      updatedQueue[itemIndex].savedPath = `${directoryHandle.name}/md/${relativeSubpath}${targetFilename}`;
+      updatedQueue[itemIndex].savedPath = `${parentHandle.name}/${targetFolderName}/${relativeSubpath}${targetFilename}`;
     } catch (err) {
       updatedQueue[itemIndex].status = 'error';
       updatedQueue[itemIndex].errorMsg = err.message || 'Unknown conversion error';
@@ -242,6 +275,7 @@ export default function App() {
   const clearQueue = () => {
     setQueue([]);
     setDirectoryHandle(null);
+    setOutputDirectoryHandle(null);
     setCurrentIndex(0);
     setSelectedId(null);
   };
@@ -293,13 +327,13 @@ export default function App() {
         <section className="lg:col-span-7 flex flex-col gap-6">
           
           {/* Card 1: Directory Selection */}
-          <div className="bg-slate-900/40 border border-slate-800/80 backdrop-blur-xl rounded-2xl p-6 shadow-xl flex flex-col gap-4">
+          <div className="bg-slate-900/40 border border-slate-800/80 backdrop-blur-xl rounded-2xl p-6 shadow-xl flex flex-col gap-5">
             <div className="flex items-center gap-2">
               <span className="h-6 w-6 rounded-full bg-violet-950 border border-violet-500/30 flex items-center justify-center text-xs font-bold text-violet-400">1</span>
               <h2 className="text-lg font-bold text-slate-200">Select Local Folder</h2>
             </div>
             <p className="text-xs text-slate-400 leading-relaxed">
-              Click below to select your folder. The application will scan the folder recursively, convert documents, and replicate the nested subfolder directory structure inside the automatically created <strong>`md/`</strong> folder.
+              Click below to select your source folder containing documents. The application will scan it recursively for parsing.
             </p>
             
             {directoryHandle ? (
@@ -311,7 +345,7 @@ export default function App() {
                     </svg>
                   </div>
                   <div>
-                    <p className="text-xs text-slate-500 font-bold uppercase tracking-wider">Active Folder</p>
+                    <p className="text-xs text-slate-500 font-bold uppercase tracking-wider">Source Folder</p>
                     <p className="text-sm font-semibold text-slate-200">{directoryHandle.name}</p>
                   </div>
                 </div>
@@ -341,6 +375,68 @@ export default function App() {
                   </div>
                 </div>
               </button>
+            )}
+
+            {/* Output Strategy Section */}
+            {directoryHandle && (
+              <div className="border-t border-slate-800/80 pt-4 mt-1 flex flex-col gap-3">
+                <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Output Strategy</label>
+                <div className="grid grid-cols-2 gap-4">
+                  <button
+                    onClick={() => setOutputStrategy('inplace')}
+                    disabled={isProcessing}
+                    className={`p-3 rounded-xl border text-left flex flex-col gap-1 transition ${
+                      outputStrategy === 'inplace'
+                        ? 'border-violet-500 bg-violet-950/10'
+                        : 'border-slate-800 bg-slate-950/40 hover:border-slate-700'
+                    }`}
+                  >
+                    <span className="text-xs font-bold text-slate-200">In-Place (md/)</span>
+                    <span className="text-[10px] text-slate-500">Save `md/` folder inside source folder</span>
+                  </button>
+                  <button
+                    onClick={() => setOutputStrategy('custom')}
+                    disabled={isProcessing}
+                    className={`p-3 rounded-xl border text-left flex flex-col gap-1 transition ${
+                      outputStrategy === 'custom'
+                        ? 'border-violet-500 bg-violet-950/10'
+                        : 'border-slate-800 bg-slate-950/40 hover:border-slate-700'
+                    }`}
+                  >
+                    <span className="text-xs font-bold text-slate-200">Custom Destination (md_convert/)</span>
+                    <span className="text-[10px] text-slate-500">Save `md_convert/` folder in chosen folder</span>
+                  </button>
+                </div>
+
+                {outputStrategy === 'custom' && (
+                  <div className="mt-2 flex flex-col gap-2">
+                    <label className="text-[11px] font-semibold text-slate-400">Select Top-Level Output Folder:</label>
+                    {outputDirectoryHandle ? (
+                      <div className="bg-slate-950/80 border border-slate-800 rounded-xl p-3 flex items-center justify-between">
+                        <span className="text-xs font-mono text-slate-300 truncate max-w-[250px]">{outputDirectoryHandle.name}</span>
+                        <button
+                          onClick={selectOutputFolder}
+                          disabled={isProcessing}
+                          className="px-2.5 py-1 bg-slate-900 hover:bg-slate-800 border border-slate-850 text-slate-350 text-[10px] font-bold rounded-lg transition"
+                        >
+                          Change
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={selectOutputFolder}
+                        disabled={isProcessing}
+                        className="w-full py-3 border border-dashed border-slate-800 hover:border-violet-500/50 rounded-xl bg-slate-950/20 hover:bg-slate-950/40 transition text-slate-400 text-xs font-bold flex items-center justify-center gap-2"
+                      >
+                        <svg className="w-4 h-4 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3m0 0v3m0-3h3m-3 0H9m12 0a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        Choose Top-Level Destination Folder
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
             )}
           </div>
 

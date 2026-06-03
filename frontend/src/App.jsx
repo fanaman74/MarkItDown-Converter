@@ -1,9 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 
 export default function App() {
-  const [targetPath, setTargetPath] = useState('');
-  const [pathValid, setPathValid] = useState(null); // null, true, false
-  const [pathError, setPathError] = useState('');
+  const [directoryHandle, setDirectoryHandle] = useState(null);
   const [queue, setQueue] = useState([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -11,112 +9,136 @@ export default function App() {
 
   const cancelRef = useRef(false);
 
-  // Debounced path validation
-  useEffect(() => {
-    if (!targetPath.trim()) {
-      setPathValid(null);
-      setPathError('');
-      return;
-    }
-
-    const delayDebounceFn = setTimeout(async () => {
-      try {
-        const formData = new FormData();
-        formData.append('path', targetPath);
-        const res = await fetch('http://localhost:8000/validate-path', {
-          method: 'POST',
-          body: formData,
-        });
-        if (!res.ok) {
-          throw new Error('Server returned an error');
-        }
-        const data = await res.json();
-        if (data.valid) {
-          setPathValid(true);
-          setPathError('');
-        } else {
-          setPathValid(false);
-          setPathError(data.error);
-        }
-      } catch (err) {
-        setPathValid(false);
-        setPathError('Could not connect to FastAPI server. Ensure backend is running at http://localhost:8000.');
-      }
-    }, 500);
-
-    return () => clearTimeout(delayDebounceFn);
-  }, [targetPath]);
-
-  // Handle folder picking
-  const handleFolderSelect = (event) => {
-    const files = Array.from(event.target.files);
+  // Walk the directory recursively using the Directory Access API
+  const scanDirectory = async (dirHandle) => {
+    const list = [];
     const allowedExts = ['.pdf', '.docx', '.msg', '.eml'];
     
-    const filtered = files
-      .filter(f => allowedExts.some(ext => f.name.toLowerCase().endsWith(ext)))
-      .map((f, idx) => ({
-        id: `${f.name}-${f.size}-${idx}`,
-        file: f,
-        name: f.name,
-        size: f.size,
-        status: 'pending', // 'pending' | 'processing' | 'success' | 'error'
-        markdown: '',
-        savedPath: '',
-        errorMsg: '',
-      }));
+    async function walk(handle) {
+      for await (const entry of handle.values()) {
+        if (entry.kind === 'file') {
+          const file = await entry.getFile();
+          if (allowedExts.some(ext => entry.name.toLowerCase().endsWith(ext))) {
+            list.push({
+              id: `${entry.name}-${file.size}-${file.lastModified}`,
+              file,
+              name: entry.name,
+              size: file.size,
+              status: 'pending', // 'pending' | 'processing' | 'success' | 'error'
+              markdown: '',
+              savedPath: '',
+              errorMsg: '',
+            });
+          }
+        } else if (entry.kind === 'directory') {
+          // Skip the output 'md' directory to avoid infinite loops or parsing outputs
+          if (entry.name !== 'md') {
+            await walk(entry);
+          }
+        }
+      }
+    }
     
-    setQueue(filtered);
-    setCurrentIndex(0);
-    setSelectedId(null);
+    await walk(dirHandle);
+    return list;
+  };
+
+  // Open the native browser directory picker
+  const selectFolder = async () => {
+    try {
+      const handle = await window.showDirectoryPicker();
+      setDirectoryHandle(handle);
+      
+      const files = await scanDirectory(handle);
+      setQueue(files);
+      setCurrentIndex(0);
+      setSelectedId(null);
+    } catch (err) {
+      console.error(err);
+      if (err.name !== 'AbortError') {
+        alert('Failed to access folder: ' + err.message);
+      }
+    }
   };
 
   // Convert queue file-by-file
   const startConversion = async () => {
-    if (queue.length === 0 || !pathValid) return;
+    if (queue.length === 0 || !directoryHandle) return;
     
     setIsProcessing(true);
     cancelRef.current = false;
     setCurrentIndex(0);
 
-    // Copy queue state to edit
     const updatedQueue = [...queue];
 
-    for (let i = 0; i < updatedQueue.length; i++) {
-      if (cancelRef.current) {
-        // Mark all subsequent pending items as cancelled or leave them pending
-        break;
-      }
+    try {
+      // Create or retrieve the 'md' folder inside the selected folder
+      const mdDirHandle = await directoryHandle.getDirectoryHandle('md', { create: true });
 
-      updatedQueue[i].status = 'processing';
-      setQueue([...updatedQueue]);
-
-      try {
-        const formData = new FormData();
-        formData.append('file', updatedQueue[i].file);
-        formData.append('output_dir', targetPath);
-
-        const response = await fetch('http://localhost:8000/convert', {
-          method: 'POST',
-          body: formData,
-        });
-
-        if (!response.ok) {
-          const errData = await response.json().catch(() => ({}));
-          throw new Error(errData.detail || `Server error (${response.status})`);
+      for (let i = 0; i < updatedQueue.length; i++) {
+        if (cancelRef.current) {
+          break;
         }
 
-        const data = await response.json();
-        
-        updatedQueue[i].status = 'success';
-        updatedQueue[i].markdown = data.markdown;
-        updatedQueue[i].savedPath = data.saved_path;
-      } catch (err) {
-        updatedQueue[i].status = 'error';
-        updatedQueue[i].errorMsg = err.message || 'Unknown conversion error';
-      }
+        updatedQueue[i].status = 'processing';
+        setQueue([...updatedQueue]);
 
-      setCurrentIndex(i + 1);
-      setQueue([...updatedQueue]);
+        try {
+          const formData = new FormData();
+          formData.append('file', updatedQueue[i].file);
+
+          const response = await fetch('http://localhost:8000/convert', {
+            method: 'POST',
+            body: formData,
+          });
+
+          if (!response.ok) {
+            const errData = await response.json().catch(() => ({}));
+            throw new Error(errData.detail || `Server error (${response.status})`);
+          }
+
+          const data = await response.json();
+          const markdownContent = data.markdown;
+          
+          // Collision prevention logic inside the local 'md' directory
+          const lastDotIndex = updatedQueue[i].name.lastIndexOf('.');
+          const baseName = lastDotIndex !== -1 ? updatedQueue[i].name.substring(0, lastDotIndex) : updatedQueue[i].name;
+          
+          let targetFilename = `${baseName}.md`;
+          let exists = true;
+          let counter = 1;
+          
+          while (exists) {
+            try {
+              await mdDirHandle.getFileHandle(targetFilename, { create: false });
+              // If no error, the file exists! Try a new name
+              targetFilename = `${baseName}_${counter}.md`;
+              counter++;
+            } catch (err) {
+              // File does not exist, we are good to go!
+              exists = false;
+            }
+          }
+
+          // Create the file and write to local disk
+          const fileHandle = await mdDirHandle.getFileHandle(targetFilename, { create: true });
+          const writable = await fileHandle.createWritable();
+          await writable.write(markdownContent);
+          await writable.close();
+          
+          updatedQueue[i].status = 'success';
+          updatedQueue[i].markdown = markdownContent;
+          updatedQueue[i].savedPath = `${directoryHandle.name}/md/${targetFilename}`;
+        } catch (err) {
+          updatedQueue[i].status = 'error';
+          updatedQueue[i].errorMsg = err.message || 'Unknown conversion error';
+        }
+
+        setCurrentIndex(i + 1);
+        setQueue([...updatedQueue]);
+      }
+    } catch (e) {
+      alert('Failed to write files to the target folder: ' + e.message);
     }
 
     setIsProcessing(false);
@@ -127,23 +149,20 @@ export default function App() {
     setIsProcessing(false);
   };
 
-  // Clear current queue
   const clearQueue = () => {
     setQueue([]);
+    setDirectoryHandle(null);
     setCurrentIndex(0);
     setSelectedId(null);
   };
 
-  // Selected file details
   const selectedItem = queue.find(item => item.id === selectedId);
 
-  // Copy to clipboard helper
   const copyToClipboard = (text) => {
     navigator.clipboard.writeText(text);
     alert('Markdown copied to clipboard!');
   };
 
-  // Helper to format file size
   const formatSize = (bytes) => {
     if (bytes === 0) return '0 B';
     const k = 1024;
@@ -183,75 +202,59 @@ export default function App() {
         {/* Left Column - Controls and Queue (7 cols) */}
         <section className="lg:col-span-7 flex flex-col gap-6">
           
-          {/* Card 1: Absolute Path */}
+          {/* Card 1: Directory Selection */}
           <div className="bg-slate-900/40 border border-slate-800/80 backdrop-blur-xl rounded-2xl p-6 shadow-xl flex flex-col gap-4">
             <div className="flex items-center gap-2">
               <span className="h-6 w-6 rounded-full bg-violet-950 border border-violet-500/30 flex items-center justify-center text-xs font-bold text-violet-400">1</span>
-              <h2 className="text-lg font-bold text-slate-200">Configure Target Folder</h2>
+              <h2 className="text-lg font-bold text-slate-200">Select Local Folder</h2>
             </div>
             <p className="text-xs text-slate-400 leading-relaxed">
-              Enter the absolute system path to your source folder. Converted `.md` files will be saved in an automatically created `md` folder inside this directory.
+              Click below to select your folder. The application will scan the folder for supported files, and write the converted markdown directly into an <strong>`md/`</strong> subfolder inside the selected directory.
             </p>
-            <div className="flex flex-col gap-2">
-              <input
-                type="text"
-                placeholder="e.g. /Users/fred/Documents/reports"
-                value={targetPath}
-                onChange={(e) => setTargetPath(e.target.value)}
-                disabled={isProcessing}
-                className="w-full bg-slate-950 border border-slate-800 focus:border-violet-500 focus:ring-1 focus:ring-violet-500 disabled:opacity-50 rounded-xl px-4 py-3 text-sm text-slate-200 outline-none transition"
-              />
-              {pathValid === true && (
-                <div className="flex items-center gap-1.5 text-xs text-emerald-400 font-semibold px-1">
-                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                  </svg>
-                  <span>Valid directory path. Ready to write outputs.</span>
-                </div>
-              )}
-              {pathValid === false && (
-                <div className="flex items-start gap-1.5 text-xs text-rose-400 font-medium px-1">
-                  <svg className="w-4 h-4 mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                  </svg>
-                  <span>{pathError}</span>
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Card 2: Folder Selector */}
-          <div className="bg-slate-900/40 border border-slate-800/80 backdrop-blur-xl rounded-2xl p-6 shadow-xl flex flex-col gap-4">
-            <div className="flex items-center gap-2">
-              <span className="h-6 w-6 rounded-full bg-violet-950 border border-violet-500/30 flex items-center justify-center text-xs font-bold text-violet-400">2</span>
-              <h2 className="text-lg font-bold text-slate-200">Select Folder</h2>
-            </div>
             
-            <div className="relative border border-dashed border-slate-800 hover:border-violet-500/60 rounded-xl p-8 flex flex-col items-center justify-center bg-slate-950/20 hover:bg-slate-900/20 group transition cursor-pointer">
-              <input
-                type="file"
-                webkitdirectory="true"
-                directory="true"
-                multiple
-                onChange={handleFolderSelect}
-                disabled={isProcessing}
-                className="absolute inset-0 opacity-0 cursor-pointer"
-              />
-              <div className="flex flex-col items-center gap-3">
-                <div className="p-3 rounded-full bg-slate-900 border border-slate-800 group-hover:border-violet-500/30 transition text-slate-400 group-hover:text-violet-400">
-                  <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
-                  </svg>
+            {directoryHandle ? (
+              <div className="bg-slate-950/80 border border-slate-800 rounded-xl p-4 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 rounded-lg bg-violet-950/40 border border-violet-900/50 text-violet-400">
+                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+                    </svg>
+                  </div>
+                  <div>
+                    <p className="text-xs text-slate-500 font-bold uppercase tracking-wider">Active Folder</p>
+                    <p className="text-sm font-semibold text-slate-200">{directoryHandle.name}</p>
+                  </div>
                 </div>
-                <div className="text-center">
-                  <p className="text-sm font-semibold text-slate-300">Click to choose directory folder</p>
-                  <p className="text-xs text-slate-500 mt-1">Accepts PDF, DOCX, MSG, and EML documents</p>
-                </div>
+                <button
+                  onClick={clearQueue}
+                  disabled={isProcessing}
+                  className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-slate-300 text-xs font-bold rounded-lg border border-slate-800 transition"
+                >
+                  Change Folder
+                </button>
               </div>
-            </div>
+            ) : (
+              <button
+                onClick={selectFolder}
+                disabled={isProcessing}
+                className="w-full relative border-2 border-dashed border-slate-800 hover:border-violet-500/60 rounded-xl p-8 flex flex-col items-center justify-center bg-slate-950/20 hover:bg-slate-900/20 group transition cursor-pointer"
+              >
+                <div className="flex flex-col items-center gap-3">
+                  <div className="p-3 rounded-full bg-slate-900 border border-slate-800 group-hover:border-violet-500/30 transition text-slate-400 group-hover:text-violet-400">
+                    <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+                    </svg>
+                  </div>
+                  <div className="text-center">
+                    <p className="text-sm font-semibold text-slate-300">Click to Select Folder</p>
+                    <p className="text-xs text-slate-500 mt-1">Converts PDF, DOCX, MSG, and EML documents</p>
+                  </div>
+                </div>
+              </button>
+            )}
           </div>
 
-          {/* Card 3: Queue & Conversion Progress */}
+          {/* Card 2: Queue & Conversion Progress */}
           {queue.length > 0 && (
             <div className="bg-slate-900/40 border border-slate-800/80 backdrop-blur-xl rounded-2xl p-6 shadow-xl flex flex-col gap-6 flex-1 min-h-[300px]">
               
@@ -265,15 +268,6 @@ export default function App() {
                     </p>
                   </div>
                   <div className="flex items-center gap-2">
-                    {queue.length > 0 && (
-                      <button
-                        onClick={clearQueue}
-                        disabled={isProcessing}
-                        className="px-3 py-1.5 hover:bg-slate-800 disabled:opacity-30 text-slate-400 hover:text-slate-200 rounded-lg text-xs font-bold transition"
-                      >
-                        Clear Queue
-                      </button>
-                    )}
                     {isProcessing ? (
                       <button
                         onClick={stopConversion}
@@ -284,7 +278,7 @@ export default function App() {
                     ) : (
                       <button
                         onClick={startConversion}
-                        disabled={!pathValid || queue.length === 0}
+                        disabled={queue.length === 0}
                         className="px-4 py-2 bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 disabled:opacity-40 disabled:pointer-events-none text-white rounded-lg text-xs font-bold shadow-lg shadow-indigo-500/10 transition"
                       >
                         Start Batch

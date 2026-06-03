@@ -31,15 +31,8 @@ async def validate_path(path: str = Form(...)):
 @app.post("/convert")
 async def convert_file(
     file: UploadFile = File(...),
-    output_dir: str = Form(...)
+    output_dir: str = Form(None)
 ):
-    if not os.path.exists(output_dir) or not os.path.isdir(output_dir):
-        raise HTTPException(status_code=400, detail="Invalid output directory")
-
-    # Create output directory "md" in the target folder
-    target_md_dir = os.path.join(output_dir, "md")
-    os.makedirs(target_md_dir, exist_ok=True)
-
     # Extract file extension and name
     orig_filename = file.filename
     base_name, ext = os.path.splitext(orig_filename)
@@ -60,21 +53,30 @@ async def convert_file(
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
 
-    # Collision prevention logic
-    target_filename = f"{base_name}.md"
-    target_path = os.path.join(target_md_dir, target_filename)
-    counter = 1
-    while os.path.exists(target_path):
-        target_filename = f"{base_name}_{counter}.md"
-        target_path = os.path.join(target_md_dir, target_filename)
-        counter += 1
+    target_path = None
+    if output_dir:
+        if not os.path.exists(output_dir) or not os.path.isdir(output_dir):
+            raise HTTPException(status_code=400, detail="Invalid output directory")
 
-    # Save converted markdown
-    try:
-        with open(target_path, "w", encoding="utf-8") as f:
-            f.write(markdown_content)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to write markdown file: {str(e)}")
+        # Create output directory "md" in the target folder
+        target_md_dir = os.path.join(output_dir, "md")
+        os.makedirs(target_md_dir, exist_ok=True)
+
+        # Collision prevention logic
+        target_filename = f"{base_name}.md"
+        target_path = os.path.join(target_md_dir, target_filename)
+        counter = 1
+        while os.path.exists(target_path):
+            target_filename = f"{base_name}_{counter}.md"
+            target_path = os.path.join(target_md_dir, target_filename)
+            counter += 1
+
+        # Save converted markdown
+        try:
+            with open(target_path, "w", encoding="utf-8") as f:
+                f.write(markdown_content)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to write markdown file: {str(e)}")
 
     return {
         "filename": orig_filename,

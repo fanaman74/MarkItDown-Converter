@@ -80,6 +80,12 @@ export default function App() {
           break;
         }
 
+        // Only convert if it's currently pending or processing (skip already completed files)
+        if (updatedQueue[i].status === 'success') {
+          setCurrentIndex(i + 1);
+          continue;
+        }
+
         updatedQueue[i].status = 'processing';
         setQueue([...updatedQueue]);
 
@@ -142,6 +148,69 @@ export default function App() {
     }
 
     setIsProcessing(false);
+  };
+
+  // Retry converting a single failed item
+  const retryFile = async (id) => {
+    const itemIndex = queue.findIndex(item => item.id === id);
+    if (itemIndex === -1 || !directoryHandle) return;
+
+    const updatedQueue = [...queue];
+    updatedQueue[itemIndex].status = 'processing';
+    updatedQueue[itemIndex].errorMsg = '';
+    setQueue([...updatedQueue]);
+
+    try {
+      const mdDirHandle = await directoryHandle.getDirectoryHandle('md', { create: true });
+      
+      const formData = new FormData();
+      formData.append('file', updatedQueue[itemIndex].file);
+
+      const response = await fetch('http://localhost:8000/convert', {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.detail || `Server error (${response.status})`);
+      }
+
+      const data = await response.json();
+      const markdownContent = data.markdown;
+      
+      // Collision prevention logic
+      const lastDotIndex = updatedQueue[itemIndex].name.lastIndexOf('.');
+      const baseName = lastDotIndex !== -1 ? updatedQueue[itemIndex].name.substring(0, lastDotIndex) : updatedQueue[itemIndex].name;
+      
+      let targetFilename = `${baseName}.md`;
+      let exists = true;
+      let counter = 1;
+      
+      while (exists) {
+        try {
+          await mdDirHandle.getFileHandle(targetFilename, { create: false });
+          targetFilename = `${baseName}_${counter}.md`;
+          counter++;
+        } catch (err) {
+          exists = false;
+        }
+      }
+
+      const fileHandle = await mdDirHandle.getFileHandle(targetFilename, { create: true });
+      const writable = await fileHandle.createWritable();
+      await writable.write(markdownContent);
+      await writable.close();
+
+      updatedQueue[itemIndex].status = 'success';
+      updatedQueue[itemIndex].markdown = markdownContent;
+      updatedQueue[itemIndex].savedPath = `${directoryHandle.name}/md/${targetFilename}`;
+    } catch (err) {
+      updatedQueue[itemIndex].status = 'error';
+      updatedQueue[itemIndex].errorMsg = err.message || 'Unknown conversion error';
+    }
+
+    setQueue([...updatedQueue]);
   };
 
   const stopConversion = () => {
@@ -354,12 +423,26 @@ export default function App() {
                           </span>
                         )}
                         {item.status === 'error' && (
-                          <span className="text-xs text-rose-400 font-bold px-2 py-0.5 bg-rose-950/20 border border-rose-900/30 rounded-full flex items-center gap-1">
-                            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                            </svg>
-                            Error
-                          </span>
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-xs text-rose-400 font-bold px-2 py-0.5 bg-rose-950/20 border border-rose-900/30 rounded-full flex items-center gap-1">
+                              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                              </svg>
+                              Error
+                            </span>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                retryFile(item.id);
+                              }}
+                              className="p-1 hover:bg-slate-800 text-slate-400 hover:text-violet-400 rounded-lg transition"
+                              title="Retry conversion"
+                            >
+                              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 7.89M9 11l3-3m0 0l3 3" />
+                              </svg>
+                            </button>
+                          </div>
                         )}
                       </div>
                     </div>
@@ -409,11 +492,19 @@ export default function App() {
                       <span className="text-slate-500 italic">Document was empty or converted to empty Markdown.</span>
                     )
                   ) : selectedItem.status === 'error' ? (
-                    <div className="flex flex-col gap-2 text-rose-400">
-                      <span className="font-bold">Error details:</span>
-                      <p className="leading-relaxed bg-rose-950/10 border border-rose-900/30 rounded-lg p-3 text-rose-300 font-sans">
-                        {selectedItem.errorMsg}
-                      </p>
+                    <div className="flex flex-col gap-4 text-rose-400">
+                      <div className="flex flex-col gap-2">
+                        <span className="font-bold text-sm">Failed Conversion Detail</span>
+                        <p className="leading-relaxed bg-rose-950/10 border border-rose-900/30 rounded-lg p-3.5 text-rose-300 font-sans text-xs">
+                          {selectedItem.errorMsg}
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => retryFile(selectedItem.id)}
+                        className="self-start px-4 py-2 bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white rounded-lg text-xs font-bold transition shadow-lg shadow-indigo-500/10"
+                      >
+                        Retry Conversion
+                      </button>
                     </div>
                   ) : selectedItem.status === 'processing' ? (
                     <div className="h-full flex flex-col items-center justify-center gap-3 text-slate-400 py-12">

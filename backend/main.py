@@ -31,6 +31,10 @@ def sanitize_filename(name: str, max_len: int = 100) -> str:
     return cleaned[:max_len].lower()
 
 def clean_email_body(text: str) -> str:
+    # Strip Markdown links and formatting emphasis (*, _) first so headers/footers can be regex-matched cleanly
+    text = re.sub(r'\[([^\]]+)\]\([^\)]+\)', r'\1', text)
+    text = re.sub(r'[*_]', '', text)
+
     thread_patterns = [
         re.compile(r'-+\s*(original|forwarded)\s*message\s*-+', re.IGNORECASE),
         re.compile(r'^\s*(original|forwarded)\s*message\s*$', re.IGNORECASE),
@@ -49,7 +53,12 @@ def clean_email_body(text: str) -> str:
     cleaned_body = re.sub(r'https?://\S+', '', cleaned_body)
     cleaned_body = re.sub(r'\S+@\S+', '', cleaned_body)
     
-    header_pattern = re.compile(r'^\s*(from|to|cc|subject|date|de|à|objet)\s*:\s*', re.IGNORECASE)
+    # Match headers wrapped in markdown ** or __, as well as additional meeting metadata headers
+    header_pattern = re.compile(
+        r'^\s*(\*\*|__)?\s*(from|to|cc|subject|date|de|à|objet|re|fwd|meeting\s+id|id\s+de\s+la\s+r\xe9union|id\s+de\s+la\s+reunion|passcode|code\s+secret|code\s+d\s*\'\s*acc\xe8s|code\s+d\s*\'\s*acces)\b\s*(\*\*|__)?\s*:\s*', 
+        re.IGNORECASE
+    )
+    
     footer_patterns = [
         re.compile(r'sent\s+with\s+proton\s*mail\b.*', re.IGNORECASE),
         re.compile(r'sent\s+from\s+proton\s*mail\b.*', re.IGNORECASE),
@@ -126,14 +135,7 @@ def summarize_body_for_filename(text: str) -> str:
             valid_sentences.append(s_clean)
             
     if not valid_sentences:
-        # Fallback to the first line with content
-        for line in lines:
-            if line.strip():
-                valid_sentences.append(line.strip())
-                break
-                
-    if not valid_sentences:
-        return "untitled_email"
+        return ""
         
     # Score sentences based on word frequency of non-stopwords in the cleaned text
     all_words = re.findall(r'\b[^\W\d_]{3,}\b', cleaned_text.lower())

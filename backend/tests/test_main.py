@@ -124,4 +124,25 @@ def test_convert_eml_file_with_thread_and_footers():
         # and NOT contain the Proton footer or original message thread.
         assert res_json["suggested_filename"] == "can_you_review_this_summary_of_our_meeting.md"
 
+def test_convert_eml_file_only_footer_fallback_to_subject():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        # EML with body containing only greetings and Proton footer, but has a subject line
+        eml_content = (
+            b"From: sender@example.com\n"
+            b"To: receiver@example.com\n"
+            b"Subject: Weekly Status Update\n"
+            b"Date: Wed, 3 Jun 2026 11:27:00 +0200\n"
+            b"Content-Type: text/plain; charset=utf-8\n\n"
+            b"Hi Nathalie,\n\n"
+            b"Sent with Proton Mail secure email."
+        )
+        files = {"file": ("test_only_footer.eml", eml_content, "message/rfc822")}
+        data = {"output_dir": tmp_dir, "rename_eml": "true"}
+        response = client.post("/convert", files=files, data=data)
+        assert response.status_code == 200
+        res_json = response.json()
+        assert res_json["status"] == "success"
+        # The filename should fall back to the subject line 'Weekly Status Update'
+        assert res_json["suggested_filename"] == "weekly_status_update.md"
+
 

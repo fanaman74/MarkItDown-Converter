@@ -1,6 +1,9 @@
 import os
 import tempfile
 import shutil
+import email
+from email.policy import default
+import markdownify
 from fastapi import FastAPI, Form, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from markitdown import MarkItDown
@@ -17,6 +20,45 @@ app.add_middleware(
 
 # Initialize MarkItDown once
 md = MarkItDown()
+
+def convert_eml_to_markdown(file_path: str) -> str:
+    try:
+        with open(file_path, "rb") as f:
+            msg = email.message_from_binary_file(f, policy=default)
+        
+        headers = []
+        for header in ["From", "To", "Cc", "Subject", "Date"]:
+            if msg[header]:
+                headers.append(f"**{header}:** {msg[header]}")
+        
+        body = ""
+        # Get plain text or html body
+        body_part = msg.get_body(preferencelist=('plain', 'html'))
+        if body_part:
+            content = body_part.get_content()
+            if body_part.get_content_type() == 'text/html':
+                body = markdownify.markdownify(content)
+            else:
+                body = content
+        else:
+            # Walk parts as fallback
+            for part in msg.walk():
+                if part.get_content_type() == "text/plain":
+                    payload = part.get_payload(decode=True)
+                    charset = part.get_content_charset() or "utf-8"
+                    body = payload.decode(charset, errors="ignore")
+                    break
+                elif part.get_content_type() == "text/html":
+                    payload = part.get_payload(decode=True)
+                    charset = part.get_content_charset() or "utf-8"
+                    html = payload.decode(charset, errors="ignore")
+                    body = markdownify.markdownify(html)
+                    break
+        
+        markdown_content = "\n".join(headers) + "\n\n" + body
+        return markdown_content
+    except Exception as e:
+        raise ValueError(f"Failed to parse EML file: {str(e)}")
 
 @app.post("/validate-path")
 async def validate_path(path: str = Form(...)):
@@ -45,10 +87,13 @@ async def convert_file(
 
     try:
         # Convert file to markdown
-        result = md.convert(tmp_path)
-        markdown_content = result.text_content
+        if ext.lower() == ".eml":
+            markdown_content = convert_eml_to_markdown(tmp_path)
+        else:
+            result = md.convert(tmp_path)
+            markdown_content = result.text_content
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"MarkItDown error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Conversion error: {str(e)}")
     finally:
         if os.path.exists(tmp_path):
             os.remove(tmp_path)

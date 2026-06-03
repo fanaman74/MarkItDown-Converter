@@ -536,7 +536,12 @@ export default function App() {
                               )}
                             </div>
                             <div className="min-w-0 flex flex-col gap-0.5">
-                              <span className="font-semibold text-slate-200 truncate">{item.name}</span>
+                              <div className="flex items-center gap-2 min-w-0">
+                                <span className="font-semibold text-slate-200 truncate">{item.name}</span>
+                                <span className="shrink-0 px-1.5 py-0.5 bg-slate-900 border border-slate-800 text-[9px] font-extrabold text-violet-400 rounded-md uppercase tracking-wider">
+                                  {item.name.substring(item.name.lastIndexOf('.') + 1)}
+                                </span>
+                              </div>
                               <span className="text-xs text-slate-500 font-mono">
                                 {item.relativePathDir ? `${item.relativePathDir}/` : ''}{formatSize(item.size)}
                               </span>

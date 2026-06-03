@@ -5,6 +5,7 @@ export default function App() {
   const [outputStrategy, setOutputStrategy] = useState('inplace'); // 'inplace' (md/) or 'custom' (md_convert/ inside chosen folder)
   const [outputDirectoryHandle, setOutputDirectoryHandle] = useState(null);
   const [queue, setQueue] = useState([]);
+  const [isScanning, setIsScanning] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [selectedId, setSelectedId] = useState(null);
@@ -51,6 +52,7 @@ export default function App() {
     try {
       const handle = await window.showDirectoryPicker();
       setDirectoryHandle(handle);
+      setIsScanning(true);
       
       const files = await scanDirectory(handle);
       setQueue(files);
@@ -61,6 +63,8 @@ export default function App() {
       if (err.name !== 'AbortError') {
         alert('Failed to access folder: ' + err.message);
       }
+    } finally {
+      setIsScanning(false);
     }
   };
 
@@ -441,133 +445,154 @@ export default function App() {
           </div>
 
           {/* Card 2: Queue & Conversion Progress */}
-          {queue.length > 0 && (
+          {directoryHandle && (
             <div className="bg-slate-900/40 border border-slate-800/80 backdrop-blur-xl rounded-2xl p-6 shadow-xl flex flex-col gap-6 flex-1 min-h-[300px]">
-              
-              {/* Progress Summary */}
-              <div className="flex flex-col gap-3">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h3 className="font-bold text-slate-200">Conversion Queue</h3>
-                    <p className="text-xs text-slate-500 mt-0.5">
-                      {currentIndex} of {queue.length} files processed
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {isProcessing ? (
-                      <button
-                        onClick={stopConversion}
-                        className="px-4 py-2 bg-rose-950 hover:bg-rose-900 border border-rose-800/50 text-rose-200 rounded-lg text-xs font-bold transition"
-                      >
-                        Stop
-                      </button>
-                    ) : (
-                      <button
-                        onClick={startConversion}
-                        disabled={queue.length === 0}
-                        className="px-4 py-2 bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 disabled:opacity-40 disabled:pointer-events-none text-white rounded-lg text-xs font-bold shadow-lg shadow-indigo-500/10 transition"
-                      >
-                        Start Batch
-                      </button>
-                    )}
-                  </div>
+              {isScanning ? (
+                <div className="flex-1 flex flex-col items-center justify-center gap-3 py-16">
+                  <svg className="animate-spin h-6 w-6 text-violet-500" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                  </svg>
+                  <span className="text-sm text-slate-400 font-semibold">Scanning directory for supported files...</span>
                 </div>
-
-                {/* Progress Bar */}
-                <div className="w-full bg-slate-950 rounded-full h-2">
-                  <div
-                    className="bg-gradient-to-r from-violet-500 to-indigo-500 h-2 rounded-full transition-all duration-300"
-                    style={{ width: `${(currentIndex / queue.length) * 100}%` }}
-                  />
+              ) : queue.length === 0 ? (
+                <div className="flex-1 flex flex-col items-center justify-center gap-2 py-16 text-center">
+                  <svg className="w-12 h-12 text-slate-700 mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                  </svg>
+                  <span className="text-sm font-bold text-slate-300">No Supported Files Found</span>
+                  <p className="text-xs text-slate-500 max-w-[280px] leading-relaxed">
+                    We scanned <strong>{directoryHandle.name}</strong> but didn't find any supported files. Supported formats: <code>.pdf</code>, <code>.docx</code>, <code>.msg</code>, <code>.eml</code>.
+                  </p>
                 </div>
-              </div>
-
-              {/* Queue List Viewport */}
-              <div className="flex-1 overflow-y-auto max-h-[350px] border border-slate-850 bg-slate-950/20 rounded-xl divide-y divide-slate-900">
-                {queue.map((item) => {
-                  const isSelected = item.id === selectedId;
-                  return (
-                    <div
-                      key={item.id}
-                      onClick={() => setSelectedId(item.id)}
-                      className={`flex items-center justify-between p-3.5 cursor-pointer text-sm transition ${
-                        isSelected ? 'bg-slate-900/60' : 'hover:bg-slate-900/20'
-                      }`}
-                    >
-                      <div className="flex items-center gap-3 min-w-0 pr-4">
-                        <div className="shrink-0 text-slate-400">
-                          {item.name.toLowerCase().endsWith('.pdf') && (
-                            <svg className="w-5 h-5 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
-                            </svg>
-                          )}
-                          {item.name.toLowerCase().endsWith('.docx') && (
-                            <svg className="w-5 h-5 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                            </svg>
-                          )}
-                          {(item.name.toLowerCase().endsWith('.msg') || item.name.toLowerCase().endsWith('.eml')) && (
-                            <svg className="w-5 h-5 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-                            </svg>
-                          )}
-                        </div>
-                        <div className="min-w-0 flex flex-col gap-0.5">
-                          <span className="font-semibold text-slate-200 truncate">{item.name}</span>
-                          <span className="text-xs text-slate-500 font-mono">
-                            {item.relativePathDir ? `${item.relativePathDir}/` : ''}{formatSize(item.size)}
-                          </span>
-                        </div>
+              ) : (
+                <>
+                  {/* Progress Summary */}
+                  <div className="flex flex-col gap-3">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <h3 className="font-bold text-slate-200">Conversion Queue</h3>
+                        <p className="text-xs text-slate-500 mt-0.5">
+                          {currentIndex} of {queue.length} files processed
+                        </p>
                       </div>
-
-                      <div className="shrink-0 flex items-center">
-                        {item.status === 'pending' && (
-                          <span className="text-xs text-slate-500 font-bold px-2 py-0.5 bg-slate-900 border border-slate-800 rounded-full">Pending</span>
-                        )}
-                        {item.status === 'processing' && (
-                          <div className="flex items-center gap-1.5 text-xs text-violet-400 font-bold px-2.5 py-0.5 bg-violet-950/20 border border-violet-900/50 rounded-full">
-                            <svg className="animate-spin h-3.5 w-3.5 text-violet-400" fill="none" viewBox="0 0 24 24">
-                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                            </svg>
-                            <span>Parsing</span>
-                          </div>
-                        )}
-                        {item.status === 'success' && (
-                          <span className="text-xs text-emerald-400 font-bold px-2 py-0.5 bg-emerald-950/20 border border-emerald-900/30 rounded-full flex items-center gap-1">
-                            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                            </svg>
-                            Done
-                          </span>
-                        )}
-                        {item.status === 'error' && (
-                          <div className="flex items-center gap-1.5">
-                            <span className="text-xs text-rose-400 font-bold px-2 py-0.5 bg-rose-950/20 border border-rose-900/30 rounded-full flex items-center gap-1">
-                              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                              </svg>
-                              Error
-                            </span>
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                retryFile(item.id);
-                              }}
-                              className="p-1 hover:bg-slate-800 text-slate-400 hover:text-violet-400 rounded-lg transition"
-                              title="Retry conversion"
-                            >
-                              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 7.89M9 11l3-3m0 0l3 3" />
-                              </svg>
-                            </button>
-                          </div>
+                      <div className="flex items-center gap-2">
+                        {isProcessing ? (
+                          <button
+                            onClick={stopConversion}
+                            className="px-4 py-2 bg-rose-950 hover:bg-rose-900 border border-rose-800/50 text-rose-200 rounded-lg text-xs font-bold transition"
+                          >
+                            Stop
+                          </button>
+                        ) : (
+                          <button
+                            onClick={startConversion}
+                            disabled={outputStrategy === 'custom' && !outputDirectoryHandle}
+                            className="px-4 py-2 bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 disabled:opacity-40 disabled:pointer-events-none text-white rounded-lg text-xs font-bold shadow-lg shadow-indigo-500/10 transition"
+                          >
+                            Start Batch
+                          </button>
                         )}
                       </div>
                     </div>
-                  );
-                })}
-              </div>
+
+                    {/* Progress Bar */}
+                    <div className="w-full bg-slate-950 rounded-full h-2">
+                      <div
+                        className="bg-gradient-to-r from-violet-500 to-indigo-500 h-2 rounded-full transition-all duration-300"
+                        style={{ width: `${(currentIndex / queue.length) * 100}%` }}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Queue List Viewport */}
+                  <div className="flex-1 overflow-y-auto max-h-[350px] border border-slate-850 bg-slate-950/20 rounded-xl divide-y divide-slate-900">
+                    {queue.map((item) => {
+                      const isSelected = item.id === selectedId;
+                      return (
+                        <div
+                          key={item.id}
+                          onClick={() => setSelectedId(item.id)}
+                          className={`flex items-center justify-between p-3.5 cursor-pointer text-sm transition ${
+                            isSelected ? 'bg-slate-900/60' : 'hover:bg-slate-900/20'
+                          }`}
+                        >
+                          <div className="flex items-center gap-3 min-w-0 pr-4">
+                            <div className="shrink-0 text-slate-400">
+                              {item.name.toLowerCase().endsWith('.pdf') && (
+                                <svg className="w-5 h-5 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                                </svg>
+                              )}
+                              {item.name.toLowerCase().endsWith('.docx') && (
+                                <svg className="w-5 h-5 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                                </svg>
+                              )}
+                              {(item.name.toLowerCase().endsWith('.msg') || item.name.toLowerCase().endsWith('.eml')) && (
+                                <svg className="w-5 h-5 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                                </svg>
+                              )}
+                            </div>
+                            <div className="min-w-0 flex flex-col gap-0.5">
+                              <span className="font-semibold text-slate-200 truncate">{item.name}</span>
+                              <span className="text-xs text-slate-500 font-mono">
+                                {item.relativePathDir ? `${item.relativePathDir}/` : ''}{formatSize(item.size)}
+                              </span>
+                            </div>
+                          </div>
+
+                          <div className="shrink-0 flex items-center">
+                            {item.status === 'pending' && (
+                              <span className="text-xs text-slate-500 font-bold px-2 py-0.5 bg-slate-900 border border-slate-800 rounded-full">Pending</span>
+                            )}
+                            {item.status === 'processing' && (
+                              <div className="flex items-center gap-1.5 text-xs text-violet-400 font-bold px-2.5 py-0.5 bg-violet-950/20 border border-violet-900/50 rounded-full">
+                                <svg className="animate-spin h-3.5 w-3.5 text-violet-400" fill="none" viewBox="0 0 24 24">
+                                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                                </svg>
+                                <span>Parsing</span>
+                              </div>
+                            )}
+                            {item.status === 'success' && (
+                              <span className="text-xs text-emerald-400 font-bold px-2 py-0.5 bg-emerald-950/20 border border-emerald-900/30 rounded-full flex items-center gap-1">
+                                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                                </svg>
+                                Done
+                              </span>
+                            )}
+                            {item.status === 'error' && (
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-xs text-rose-400 font-bold px-2 py-0.5 bg-rose-950/20 border border-rose-900/30 rounded-full flex items-center gap-1">
+                                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                                  </svg>
+                                  Error
+                                </span>
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    retryFile(item.id);
+                                  }}
+                                  className="p-1 hover:bg-slate-800 text-slate-400 hover:text-violet-400 rounded-lg transition"
+                                  title="Retry conversion"
+                                >
+                                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 7.89M9 11l3-3m0 0l3 3" />
+                                  </svg>
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
             </div>
           )}
         </section>

@@ -140,17 +140,24 @@ def convert_eml_to_markdown(file_path: str) -> tuple[str, str]:
         
         markdown_content = "\n".join(headers) + "\n\n" + body
         
-        # Determine suggested filename based on Subject or keywords
-        subject = msg["Subject"]
+        # Determine suggested filename based on body summary primarily
         suggested_name = ""
-        if subject and subject.strip():
-            # Strip common Re:/Fwd: prefixes
-            clean_subject = re.sub(r'^(re|fwd|fw|re\s*\[\d+\]):\s*', '', subject, flags=re.IGNORECASE).strip()
-            if clean_subject:
-                suggested_name = sanitize_filename(clean_subject)
-                
+        if body.strip():
+            summary = summarize_body_for_filename(body)
+            if summary and summary != "untitled_email":
+                suggested_name = sanitize_filename(summary)
+        
+        # Fallback to subject if body summary is not possible/empty
         if not suggested_name:
-            suggested_name = sanitize_filename(summarize_body_for_filename(body))
+            subject = msg["Subject"]
+            if subject and subject.strip():
+                # Strip common Re:/Fwd: prefixes
+                clean_subject = re.sub(r'^(re|fwd|fw|re\s*\[\d+\]):\s*', '', subject, flags=re.IGNORECASE).strip()
+                if clean_subject:
+                    suggested_name = sanitize_filename(clean_subject)
+                    
+        if not suggested_name:
+            suggested_name = "untitled_email"
             
         return markdown_content, f"{suggested_name}.md"
     except Exception as e:

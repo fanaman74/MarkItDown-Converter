@@ -470,7 +470,7 @@ export default function App() {
                         disabled={isProcessing}
                         className="h-4.5 w-4.5 accent-violet-600 rounded bg-slate-950 border-slate-850 focus:ring-violet-500 transition"
                       />
-                      <span>Use email <strong>Subject</strong> (or body keywords if empty) as the output filename (for EML files)</span>
+                      <span>Use 15-word email body summary as the output filename (for EML files)</span>
                     </label>
                   </div>
                 )}

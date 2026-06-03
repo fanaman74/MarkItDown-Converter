@@ -59,7 +59,7 @@ def test_convert_eml_file():
         assert res_json["status"] == "success"
         assert "**Subject:** Test Subject EML" in res_json["markdown"]
         assert "This is the body content of the EML" in res_json["markdown"]
-        assert res_json["suggested_filename"] == "test_subject_eml.md"
+        assert res_json["suggested_filename"] == "this_is_the_body_content_of_the_eml_email_message.md"
 
 def test_convert_eml_file_no_subject():
     with tempfile.TemporaryDirectory() as tmp_dir:

@@ -22,15 +22,15 @@ app.add_middleware(
 # Initialize MarkItDown once
 md = MarkItDown()
 
-def sanitize_filename(name: str) -> str:
+def sanitize_filename(name: str, max_len: int = 100) -> str:
     # Remove any character that is not alphanumeric, space, hyphen, or underscore
     cleaned = re.sub(r'[^\w\s\-]', '', name)
     # Replace spaces and hyphens with single underscores
     cleaned = re.sub(r'[\s\-]+', '_', cleaned.strip())
-    # Truncate to max 60 characters
-    return cleaned[:60].lower()
+    # Truncate
+    return cleaned[:max_len].lower()
 
-def extract_keywords_from_text(text: str) -> str:
+def summarize_body_for_filename(text: str) -> str:
     stop_words = {
         "the", "a", "an", "and", "or", "but", "if", "then", "else", "when", "at", "from",
         "by", "for", "with", "about", "against", "between", "into", "through", "during",
@@ -38,24 +38,71 @@ def extract_keywords_from_text(text: str) -> str:
         "were", "be", "been", "being", "have", "has", "had", "having", "do", "does",
         "did", "doing", "would", "should", "could", "ought", "i", "you", "he", "she",
         "it", "we", "they", "this", "that", "these", "those", "am", "as", "their",
-        "our", "my", "your", "his", "her", "its", "them", "us", "him", "me"
+        "our", "my", "your", "his", "her", "its", "them", "us", "him", "me", "hope", "well",
+        "thanks", "regards", "best", "hello", "dear", "hi"
     }
-    # Match alphabetical words of length 3 or greater (Unicode-aware)
-    words = re.findall(r'\b[^\W\d_]{3,}\b', text.lower())
-    filtered_words = [w for w in words if w not in stop_words]
+    pleasantry_patterns = [
+        re.compile(r'^(hi|hello|dear|hey|good\s+(morning|afternoon|evening))\b', re.IGNORECASE),
+        re.compile(r'^how\s+(are|is)\s+(you|things|everything)\b', re.IGNORECASE),
+        re.compile(r'^hope\s+you\s+(are|doing)\s+well\b', re.IGNORECASE),
+        re.compile(r'^hope\s+this\s+finds\s+you\s+well\b', re.IGNORECASE),
+        re.compile(r'^(thanks|thank\s+you|best\s+regards|sincerely|regards)\b', re.IGNORECASE)
+    ]
     
-    # Get frequencies
+    # Split text into lines/paragraphs
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    
+    valid_sentences = []
+    for line in lines:
+        # Split each line into sentences
+        sentences = re.split(r'(?<=[.!?])\s+', line)
+        for s in sentences:
+            s_clean = s.strip()
+            if not s_clean:
+                continue
+            # Skip pleasantry sentences
+            if any(p.match(s_clean) for p in pleasantry_patterns):
+                continue
+            # Skip greeting line structures ending with comma/exclamation
+            if len(s_clean.split()) <= 4 and (s_clean.endswith(',') or s_clean.endswith('!')):
+                if any(word in s_clean.lower() for word in ["hi", "hello", "dear", "hey", "thanks", "regards"]):
+                    continue
+            # Skip short sentences (less than 4 words)
+            if len(s_clean.split()) < 4:
+                continue
+            valid_sentences.append(s_clean)
+            
+    if not valid_sentences:
+        # Fallback to the first line with content
+        for line in lines:
+            if line.strip():
+                valid_sentences.append(line.strip())
+                break
+                
+    if not valid_sentences:
+        return "untitled_email"
+        
+    # Score sentences based on word frequency of non-stopwords
+    all_words = re.findall(r'\b[^\W\d_]{3,}\b', text.lower())
+    filtered_words = [w for w in all_words if w not in stop_words]
     freq = {}
     for w in filtered_words:
         freq[w] = freq.get(w, 0) + 1
         
-    # Extract top 4 most frequent keywords
-    sorted_words = sorted(freq.items(), key=lambda x: x[1], reverse=True)
-    top_words = [w[0] for w in sorted_words[:4]]
-    
-    if top_words:
-        return "_".join(top_words)
-    return "untitled_email"
+    best_sentence = valid_sentences[0]
+    best_score = -1
+    for s in valid_sentences:
+        words_in_s = re.findall(r'\b[^\W\d_]{3,}\b', s.lower())
+        score = sum(freq.get(w, 0) for w in words_in_s if w not in stop_words)
+        normalized_score = score / len(words_in_s) if len(words_in_s) > 0 else 0
+        if normalized_score > best_score:
+            best_score = normalized_score
+            best_sentence = s
+            
+    words = best_sentence.split()
+    if len(words) > 15:
+        best_sentence = " ".join(words[:15])
+    return best_sentence
 
 def convert_eml_to_markdown(file_path: str) -> tuple[str, str]:
     try:
@@ -103,7 +150,7 @@ def convert_eml_to_markdown(file_path: str) -> tuple[str, str]:
                 suggested_name = sanitize_filename(clean_subject)
                 
         if not suggested_name:
-            suggested_name = extract_keywords_from_text(body)
+            suggested_name = sanitize_filename(summarize_body_for_filename(body))
             
         return markdown_content, f"{suggested_name}.md"
     except Exception as e:

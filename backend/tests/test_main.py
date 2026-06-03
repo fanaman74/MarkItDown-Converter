@@ -77,11 +77,7 @@ def test_convert_eml_file_no_subject():
         assert response.status_code == 200
         res_json = response.json()
         assert res_json["status"] == "success"
-        # Should extract keywords like: project, meeting, agenda, billing, deployment, etc.
-        suggested = res_json["suggested_filename"]
-        assert suggested.endswith(".md")
-        # Check that it extracted words of length >= 3 and not stopwords
-        assert "project" in suggested or "meeting" in suggested or "agenda" in suggested
+        assert res_json["suggested_filename"] == "urgent_project_meeting_agenda.md"
 
 def test_convert_eml_file_unicode_no_subject():
     with tempfile.TemporaryDirectory() as tmp_dir:
@@ -99,9 +95,6 @@ def test_convert_eml_file_unicode_no_subject():
         assert response.status_code == 200
         res_json = response.json()
         assert res_json["status"] == "success"
-        suggested = res_json["suggested_filename"]
-        assert suggested.endswith(".md")
-        # Should extract 'café' and 'résumé' and 'réunion'
-        assert "café" in suggested or "résumé" in suggested or "réunion" in suggested
+        assert res_json["suggested_filename"] == "le_café_et_le_résumé_de_la_réunion_importante.md"
 
 

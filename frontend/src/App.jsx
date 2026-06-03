@@ -14,7 +14,7 @@ export default function App() {
     const list = [];
     const allowedExts = ['.pdf', '.docx', '.msg', '.eml'];
     
-    async function walk(handle) {
+    async function walk(handle, currentPath = '') {
       for await (const entry of handle.values()) {
         if (entry.kind === 'file') {
           const file = await entry.getFile();
@@ -23,6 +23,7 @@ export default function App() {
               id: `${entry.name}-${file.size}-${file.lastModified}`,
               file,
               name: entry.name,
+              relativePathDir: currentPath, // Store relative directories (e.g. 'subA/subB' or '')
               size: file.size,
               status: 'pending', // 'pending' | 'processing' | 'success' | 'error'
               markdown: '',
@@ -33,7 +34,7 @@ export default function App() {
         } else if (entry.kind === 'directory') {
           // Skip the output 'md' directory to avoid infinite loops or parsing outputs
           if (entry.name !== 'md') {
-            await walk(entry);
+            await walk(entry, currentPath ? `${currentPath}/${entry.name}` : entry.name);
           }
         }
       }
@@ -59,6 +60,18 @@ export default function App() {
         alert('Failed to access folder: ' + err.message);
       }
     }
+  };
+
+  // Helper to resolve nested directories handles inside 'md'
+  const resolveTargetDirHandle = async (rootMdHandle, relativePathDir) => {
+    let currentDirHandle = rootMdHandle;
+    if (relativePathDir) {
+      const parts = relativePathDir.split('/');
+      for (const part of parts) {
+        currentDirHandle = await currentDirHandle.getDirectoryHandle(part, { create: true });
+      }
+    }
+    return currentDirHandle;
   };
 
   // Convert queue file-by-file
@@ -106,7 +119,10 @@ export default function App() {
           const data = await response.json();
           const markdownContent = data.markdown;
           
-          // Collision prevention logic inside the local 'md' directory
+          // Replicate nested subfolders inside 'md'
+          const targetDirHandle = await resolveTargetDirHandle(mdDirHandle, updatedQueue[i].relativePathDir);
+
+          // Collision prevention logic inside the specific target subdirectory
           const lastDotIndex = updatedQueue[i].name.lastIndexOf('.');
           const baseName = lastDotIndex !== -1 ? updatedQueue[i].name.substring(0, lastDotIndex) : updatedQueue[i].name;
           
@@ -116,7 +132,7 @@ export default function App() {
           
           while (exists) {
             try {
-              await mdDirHandle.getFileHandle(targetFilename, { create: false });
+              await targetDirHandle.getFileHandle(targetFilename, { create: false });
               // If no error, the file exists! Try a new name
               targetFilename = `${baseName}_${counter}.md`;
               counter++;
@@ -127,14 +143,15 @@ export default function App() {
           }
 
           // Create the file and write to local disk
-          const fileHandle = await mdDirHandle.getFileHandle(targetFilename, { create: true });
+          const fileHandle = await targetDirHandle.getFileHandle(targetFilename, { create: true });
           const writable = await fileHandle.createWritable();
           await writable.write(markdownContent);
           await writable.close();
           
           updatedQueue[i].status = 'success';
           updatedQueue[i].markdown = markdownContent;
-          updatedQueue[i].savedPath = `${directoryHandle.name}/md/${targetFilename}`;
+          const relativeSubpath = updatedQueue[i].relativePathDir ? `${updatedQueue[i].relativePathDir}/` : '';
+          updatedQueue[i].savedPath = `${directoryHandle.name}/md/${relativeSubpath}${targetFilename}`;
         } catch (err) {
           updatedQueue[i].status = 'error';
           updatedQueue[i].errorMsg = err.message || 'Unknown conversion error';
@@ -179,6 +196,9 @@ export default function App() {
       const data = await response.json();
       const markdownContent = data.markdown;
       
+      // Replicate nested subfolders inside 'md'
+      const targetDirHandle = await resolveTargetDirHandle(mdDirHandle, updatedQueue[itemIndex].relativePathDir);
+
       // Collision prevention logic
       const lastDotIndex = updatedQueue[itemIndex].name.lastIndexOf('.');
       const baseName = lastDotIndex !== -1 ? updatedQueue[itemIndex].name.substring(0, lastDotIndex) : updatedQueue[itemIndex].name;
@@ -189,7 +209,7 @@ export default function App() {
       
       while (exists) {
         try {
-          await mdDirHandle.getFileHandle(targetFilename, { create: false });
+          await targetDirHandle.getFileHandle(targetFilename, { create: false });
           targetFilename = `${baseName}_${counter}.md`;
           counter++;
         } catch (err) {
@@ -197,14 +217,15 @@ export default function App() {
         }
       }
 
-      const fileHandle = await mdDirHandle.getFileHandle(targetFilename, { create: true });
+      const fileHandle = await targetDirHandle.getFileHandle(targetFilename, { create: true });
       const writable = await fileHandle.createWritable();
       await writable.write(markdownContent);
       await writable.close();
 
       updatedQueue[itemIndex].status = 'success';
       updatedQueue[itemIndex].markdown = markdownContent;
-      updatedQueue[itemIndex].savedPath = `${directoryHandle.name}/md/${targetFilename}`;
+      const relativeSubpath = updatedQueue[itemIndex].relativePathDir ? `${updatedQueue[itemIndex].relativePathDir}/` : '';
+      updatedQueue[itemIndex].savedPath = `${directoryHandle.name}/md/${relativeSubpath}${targetFilename}`;
     } catch (err) {
       updatedQueue[itemIndex].status = 'error';
       updatedQueue[itemIndex].errorMsg = err.message || 'Unknown conversion error';
@@ -278,7 +299,7 @@ export default function App() {
               <h2 className="text-lg font-bold text-slate-200">Select Local Folder</h2>
             </div>
             <p className="text-xs text-slate-400 leading-relaxed">
-              Click below to select your folder. The application will scan the folder for supported files, and write the converted markdown directly into an <strong>`md/`</strong> subfolder inside the selected directory.
+              Click below to select your folder. The application will scan the folder recursively, convert documents, and replicate the nested subfolder directory structure inside the automatically created <strong>`md/`</strong> folder.
             </p>
             
             {directoryHandle ? (
@@ -397,7 +418,9 @@ export default function App() {
                         </div>
                         <div className="min-w-0 flex flex-col gap-0.5">
                           <span className="font-semibold text-slate-200 truncate">{item.name}</span>
-                          <span className="text-xs text-slate-500">{formatSize(item.size)}</span>
+                          <span className="text-xs text-slate-500 font-mono">
+                            {item.relativePathDir ? `${item.relativePathDir}/` : ''}{formatSize(item.size)}
+                          </span>
                         </div>
                       </div>
 

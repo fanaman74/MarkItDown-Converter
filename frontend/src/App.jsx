@@ -4,7 +4,7 @@ export default function App() {
   const [directoryHandle, setDirectoryHandle] = useState(null);
   const [outputStrategy, setOutputStrategy] = useState('inplace'); // 'inplace' (md/) or 'custom' (md_convert/ inside chosen folder)
   const [outputDirectoryHandle, setOutputDirectoryHandle] = useState(null);
-  const [renameEml, setRenameEml] = useState(true); // Toggle to use email subject as filename
+  const [renameEml, setRenameEml] = useState(true); // Toggle to use [date]-[from]-[to]-[summary] structure as filename
   const [queue, setQueue] = useState([]);
   const [isScanning, setIsScanning] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -470,7 +470,7 @@ export default function App() {
                         disabled={isProcessing}
                         className="h-4.5 w-4.5 accent-violet-600 rounded bg-slate-950 border-slate-850 focus:ring-violet-500 transition"
                       />
-                      <span>Use 15-word email body summary as the output filename (for EML files)</span>
+                      <span>Use [date]-[from]-[to]-[summary] structure as the output filename (for EML files)</span>
                     </label>
                   </div>
                 )}

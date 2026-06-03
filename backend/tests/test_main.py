@@ -59,7 +59,7 @@ def test_convert_eml_file():
         assert res_json["status"] == "success"
         assert "**Subject:** Test Subject EML" in res_json["markdown"]
         assert "This is the body content of the EML" in res_json["markdown"]
-        assert res_json["suggested_filename"] == "this_is_the_body_content_of_the_eml_email_message.md"
+        assert res_json["suggested_filename"] == "03-06-26-sender-receiver-this_is_the_body_content_of_the_eml_email_message.md"
 
 def test_convert_eml_file_no_subject():
     with tempfile.TemporaryDirectory() as tmp_dir:
@@ -77,7 +77,7 @@ def test_convert_eml_file_no_subject():
         assert response.status_code == 200
         res_json = response.json()
         assert res_json["status"] == "success"
-        assert res_json["suggested_filename"] == "urgent_project_meeting_agenda.md"
+        assert res_json["suggested_filename"] == "03-06-26-sender-receiver-urgent_project_meeting_agenda.md"
 
 def test_convert_eml_file_unicode_no_subject():
     with tempfile.TemporaryDirectory() as tmp_dir:
@@ -95,7 +95,7 @@ def test_convert_eml_file_unicode_no_subject():
         assert response.status_code == 200
         res_json = response.json()
         assert res_json["status"] == "success"
-        assert res_json["suggested_filename"] == "le_café_et_le_résumé_de_la_réunion_importante.md"
+        assert res_json["suggested_filename"] == "03-06-26-sender-receiver-le_café_et_le_résumé_de_la_réunion_importante.md"
 
 def test_convert_eml_file_with_thread_and_footers():
     with tempfile.TemporaryDirectory() as tmp_dir:
@@ -122,7 +122,7 @@ def test_convert_eml_file_with_thread_and_footers():
         assert res_json["status"] == "success"
         # The filename should be generated from 'Can you review this summary of our meeting?'
         # and NOT contain the Proton footer or original message thread.
-        assert res_json["suggested_filename"] == "can_you_review_this_summary_of_our_meeting.md"
+        assert res_json["suggested_filename"] == "03-06-26-sender-receiver-can_you_review_this_summary_of_our_meeting.md"
 
 def test_convert_eml_file_only_footer_fallback_to_subject():
     with tempfile.TemporaryDirectory() as tmp_dir:
@@ -143,6 +143,6 @@ def test_convert_eml_file_only_footer_fallback_to_subject():
         res_json = response.json()
         assert res_json["status"] == "success"
         # The filename should fall back to the subject line 'Weekly Status Update'
-        assert res_json["suggested_filename"] == "weekly_status_update.md"
+        assert res_json["suggested_filename"] == "03-06-26-sender-receiver-weekly_status_update.md"
 
 

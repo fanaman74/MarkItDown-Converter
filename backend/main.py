@@ -30,7 +30,60 @@ def sanitize_filename(name: str, max_len: int = 100) -> str:
     # Truncate
     return cleaned[:max_len].lower()
 
+def clean_email_body(text: str) -> str:
+    thread_patterns = [
+        re.compile(r'-+\s*(original|forwarded)\s*message\s*-+', re.IGNORECASE),
+        re.compile(r'^\s*(original|forwarded)\s*message\s*$', re.IGNORECASE),
+        re.compile(r'^\s*(on|le)\s+.*\s+(wrote|a\s+\w+crit)\s*:', re.IGNORECASE),
+    ]
+    lines = text.splitlines()
+    truncated_lines = []
+    for line in lines:
+        if any(p.match(line) for p in thread_patterns):
+            break
+        if line.strip().startswith('>') and ('wrote:' in line or 'de:' in line or 'from:' in line or 'a écrit' in line):
+            break
+        truncated_lines.append(line)
+        
+    cleaned_body = "\n".join(truncated_lines)
+    cleaned_body = re.sub(r'https?://\S+', '', cleaned_body)
+    cleaned_body = re.sub(r'\S+@\S+', '', cleaned_body)
+    
+    header_pattern = re.compile(r'^\s*(from|to|cc|subject|date|de|à|objet)\s*:\s*', re.IGNORECASE)
+    footer_patterns = [
+        re.compile(r'sent\s+with\s+proton\s*mail\b.*', re.IGNORECASE),
+        re.compile(r'sent\s+from\s+proton\s*mail\b.*', re.IGNORECASE),
+        re.compile(r'sent\s+from\s+my\s+phone\b.*', re.IGNORECASE),
+        re.compile(r'sent\s+from\s+my\s+ipad\b.*', re.IGNORECASE),
+        re.compile(r'sent\s+from\s+my\s+iphone\b.*', re.IGNORECASE),
+        re.compile(r'sent\s+from\s+my\s+android\b.*', re.IGNORECASE),
+        re.compile(r'sent\s+with\s+secure\s+email\b.*', re.IGNORECASE),
+        re.compile(r'secure\s+email\b.*', re.IGNORECASE),
+        re.compile(r'obtenez\s+proton\s+mail\b.*', re.IGNORECASE),
+        re.compile(r'download\s+proton\s+mail\b.*', re.IGNORECASE)
+    ]
+    
+    lines = cleaned_body.splitlines()
+    filtered_lines = []
+    for line in lines:
+        if header_pattern.match(line):
+            continue
+        if any(p.search(line) for p in footer_patterns):
+            line_sub = line
+            for p in footer_patterns:
+                line_sub = p.sub('', line_sub)
+            if not line_sub.strip():
+                continue
+            line = line_sub
+        filtered_lines.append(line)
+        
+    cleaned_body = "\n".join(filtered_lines)
+    return cleaned_body.strip()
+
 def summarize_body_for_filename(text: str) -> str:
+    # Clean email headers, threads, and footers first
+    cleaned_text = clean_email_body(text)
+    
     stop_words = {
         "the", "a", "an", "and", "or", "but", "if", "then", "else", "when", "at", "from",
         "by", "for", "with", "about", "against", "between", "into", "through", "during",
@@ -49,8 +102,8 @@ def summarize_body_for_filename(text: str) -> str:
         re.compile(r'^(thanks|thank\s+you|best\s+regards|sincerely|regards)\b', re.IGNORECASE)
     ]
     
-    # Split text into lines/paragraphs
-    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    # Split cleaned text into lines/paragraphs
+    lines = [line.strip() for line in cleaned_text.splitlines() if line.strip()]
     
     valid_sentences = []
     for line in lines:
@@ -82,8 +135,8 @@ def summarize_body_for_filename(text: str) -> str:
     if not valid_sentences:
         return "untitled_email"
         
-    # Score sentences based on word frequency of non-stopwords
-    all_words = re.findall(r'\b[^\W\d_]{3,}\b', text.lower())
+    # Score sentences based on word frequency of non-stopwords in the cleaned text
+    all_words = re.findall(r'\b[^\W\d_]{3,}\b', cleaned_text.lower())
     filtered_words = [w for w in all_words if w not in stop_words]
     freq = {}
     for w in filtered_words:

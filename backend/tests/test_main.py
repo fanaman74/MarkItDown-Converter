@@ -97,4 +97,31 @@ def test_convert_eml_file_unicode_no_subject():
         assert res_json["status"] == "success"
         assert res_json["suggested_filename"] == "le_café_et_le_résumé_de_la_réunion_importante.md"
 
+def test_convert_eml_file_with_thread_and_footers():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        # EML with body containing headers, thread quote, and Proton Mail footer
+        eml_content = (
+            b"From: sender@example.com\n"
+            b"To: receiver@example.com\n"
+            b"Subject: Meeting Summary\n"
+            b"Date: Wed, 3 Jun 2026 11:27:00 +0200\n"
+            b"Content-Type: text/plain; charset=utf-8\n\n"
+            b"Hi Nathalie,\n\n"
+            b"Can you review this summary of our meeting?\n\n"
+            b"Sent with Proton Mail https://proton.me/ secure email.\n\n"
+            b"--- Original Message ---\n"
+            b"From: receiver@example.com\n"
+            b"To: sender@example.com\n"
+            b"Let's schedule a meeting next week."
+        )
+        files = {"file": ("test_thread.eml", eml_content, "message/rfc822")}
+        data = {"output_dir": tmp_dir, "rename_eml": "true"}
+        response = client.post("/convert", files=files, data=data)
+        assert response.status_code == 200
+        res_json = response.json()
+        assert res_json["status"] == "success"
+        # The filename should be generated from 'Can you review this summary of our meeting?'
+        # and NOT contain the Proton footer or original message thread.
+        assert res_json["suggested_filename"] == "can_you_review_this_summary_of_our_meeting.md"
+
 

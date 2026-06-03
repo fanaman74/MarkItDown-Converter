@@ -158,6 +158,15 @@ def summarize_body_for_filename(text: str) -> str:
     if len(words) > 15:
         best_sentence = " ".join(words[:15])
     return best_sentence
+def extract_name_from_address(header_val: str) -> str:
+    if not header_val:
+        return ""
+    name, addr = email.utils.parseaddr(header_val)
+    if name:
+        return name
+    if addr and '@' in addr:
+        return addr.split('@')[0]
+    return header_val
 
 def convert_eml_to_markdown(file_path: str) -> tuple[str, str]:
     try:
@@ -195,25 +204,48 @@ def convert_eml_to_markdown(file_path: str) -> tuple[str, str]:
         
         markdown_content = "\n".join(headers) + "\n\n" + body
         
-        # Determine suggested filename based on body summary primarily
-        suggested_name = ""
+        # Parse date from EML headers
+        date_str = msg["Date"]
+        dt = None
+        if date_str:
+            try:
+                dt = email.utils.parsedate_to_datetime(date_str)
+            except Exception:
+                pass
+                
+        formatted_date = ""
+        if dt:
+            formatted_date = dt.strftime("%d-%m-%y")
+        else:
+            formatted_date = "no_date"
+            
+        # Parse sender and recipient names
+        from_val = extract_name_from_address(msg["From"]) or "unknown"
+        to_val = extract_name_from_address(msg["To"]) or "unknown"
+        
+        from_clean = sanitize_filename(from_val)
+        to_clean = sanitize_filename(to_val)
+        
+        # Determine suggested summary filename
+        summary_clean = ""
         if body.strip():
             summary = summarize_body_for_filename(body)
             if summary and summary != "untitled_email":
-                suggested_name = sanitize_filename(summary)
+                summary_clean = sanitize_filename(summary, max_len=60)
         
         # Fallback to subject if body summary is not possible/empty
-        if not suggested_name:
+        if not summary_clean:
             subject = msg["Subject"]
             if subject and subject.strip():
                 # Strip common Re:/Fwd: prefixes
                 clean_subject = re.sub(r'^(re|fwd|fw|re\s*\[\d+\]):\s*', '', subject, flags=re.IGNORECASE).strip()
                 if clean_subject:
-                    suggested_name = sanitize_filename(clean_subject)
+                    summary_clean = sanitize_filename(clean_subject, max_len=60)
                     
-        if not suggested_name:
-            suggested_name = "untitled_email"
+        if not summary_clean:
+            summary_clean = "untitled"
             
+        suggested_name = f"{formatted_date}-{from_clean}-{to_clean}-{summary_clean}"
         return markdown_content, f"{suggested_name}.md"
     except Exception as e:
         raise ValueError(f"Failed to parse EML file: {str(e)}")

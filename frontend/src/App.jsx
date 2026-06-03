@@ -4,6 +4,7 @@ export default function App() {
   const [directoryHandle, setDirectoryHandle] = useState(null);
   const [outputStrategy, setOutputStrategy] = useState('inplace'); // 'inplace' (md/) or 'custom' (md_convert/ inside chosen folder)
   const [outputDirectoryHandle, setOutputDirectoryHandle] = useState(null);
+  const [renameEml, setRenameEml] = useState(true); // Toggle to use email subject as filename
   const [queue, setQueue] = useState([]);
   const [isScanning, setIsScanning] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -134,6 +135,7 @@ export default function App() {
         try {
           const formData = new FormData();
           formData.append('file', updatedQueue[i].file);
+          formData.append('rename_eml', renameEml ? 'true' : 'false');
 
           const response = await fetch('http://localhost:8000/convert', {
             method: 'POST',
@@ -151,19 +153,24 @@ export default function App() {
           // Replicate nested subfolders inside target directory
           const targetDirHandle = await resolveTargetDirHandle(mdDirHandle, updatedQueue[i].relativePathDir);
 
+          // Name resolution (use suggested_filename from server or fallback)
+          const fallbackFilename = updatedQueue[i].name.replace(/\.[^/.]+$/, "") + ".md";
+          const targetFilename = data.suggested_filename ? data.suggested_filename : fallbackFilename;
+
           // Collision prevention logic inside the specific target subdirectory
-          const lastDotIndex = updatedQueue[i].name.lastIndexOf('.');
-          const baseName = lastDotIndex !== -1 ? updatedQueue[i].name.substring(0, lastDotIndex) : updatedQueue[i].name;
+          const lastDotIndex = targetFilename.lastIndexOf('.');
+          const baseName = lastDotIndex !== -1 ? targetFilename.substring(0, lastDotIndex) : targetFilename;
+          const extName = lastDotIndex !== -1 ? targetFilename.substring(lastDotIndex) : '.md';
           
-          let targetFilename = `${baseName}.md`;
+          let finalFilename = targetFilename;
           let exists = true;
           let counter = 1;
           
           while (exists) {
             try {
-              await targetDirHandle.getFileHandle(targetFilename, { create: false });
+              await targetDirHandle.getFileHandle(finalFilename, { create: false });
               // If no error, the file exists! Try a new name
-              targetFilename = `${baseName}_${counter}.md`;
+              finalFilename = `${baseName}_${counter}${extName}`;
               counter++;
             } catch (err) {
               // File does not exist, we are good to go!
@@ -172,7 +179,7 @@ export default function App() {
           }
 
           // Create the file and write to local disk
-          const fileHandle = await targetDirHandle.getFileHandle(targetFilename, { create: true });
+          const fileHandle = await targetDirHandle.getFileHandle(finalFilename, { create: true });
           const writable = await fileHandle.createWritable();
           await writable.write(markdownContent);
           await writable.close();
@@ -180,7 +187,7 @@ export default function App() {
           updatedQueue[i].status = 'success';
           updatedQueue[i].markdown = markdownContent;
           const relativeSubpath = updatedQueue[i].relativePathDir ? `${updatedQueue[i].relativePathDir}/` : '';
-          updatedQueue[i].savedPath = `${parentHandle.name}/${targetFolderName}/${relativeSubpath}${targetFilename}`;
+          updatedQueue[i].savedPath = `${parentHandle.name}/${targetFolderName}/${relativeSubpath}${finalFilename}`;
         } catch (err) {
           updatedQueue[i].status = 'error';
           updatedQueue[i].errorMsg = err.message || 'Unknown conversion error';
@@ -219,6 +226,7 @@ export default function App() {
       
       const formData = new FormData();
       formData.append('file', updatedQueue[itemIndex].file);
+      formData.append('rename_eml', renameEml ? 'true' : 'false');
 
       const response = await fetch('http://localhost:8000/convert', {
         method: 'POST',
@@ -236,25 +244,30 @@ export default function App() {
       // Replicate nested subfolders inside target directory
       const targetDirHandle = await resolveTargetDirHandle(mdDirHandle, updatedQueue[itemIndex].relativePathDir);
 
+      // Name resolution
+      const fallbackFilename = updatedQueue[itemIndex].name.replace(/\.[^/.]+$/, "") + ".md";
+      const targetFilename = data.suggested_filename ? data.suggested_filename : fallbackFilename;
+
       // Collision prevention logic
-      const lastDotIndex = updatedQueue[itemIndex].name.lastIndexOf('.');
-      const baseName = lastDotIndex !== -1 ? updatedQueue[itemIndex].name.substring(0, lastDotIndex) : updatedQueue[itemIndex].name;
+      const lastDotIndex = targetFilename.lastIndexOf('.');
+      const baseName = lastDotIndex !== -1 ? targetFilename.substring(0, lastDotIndex) : targetFilename;
+      const extName = lastDotIndex !== -1 ? targetFilename.substring(lastDotIndex) : '.md';
       
-      let targetFilename = `${baseName}.md`;
+      let finalFilename = targetFilename;
       let exists = true;
       let counter = 1;
       
       while (exists) {
         try {
-          await targetDirHandle.getFileHandle(targetFilename, { create: false });
-          targetFilename = `${baseName}_${counter}.md`;
+          await targetDirHandle.getFileHandle(finalFilename, { create: false });
+          finalFilename = `${baseName}_${counter}${extName}`;
           counter++;
         } catch (err) {
           exists = false;
         }
       }
 
-      const fileHandle = await targetDirHandle.getFileHandle(targetFilename, { create: true });
+      const fileHandle = await targetDirHandle.getFileHandle(finalFilename, { create: true });
       const writable = await fileHandle.createWritable();
       await writable.write(markdownContent);
       await writable.close();
@@ -262,7 +275,7 @@ export default function App() {
       updatedQueue[itemIndex].status = 'success';
       updatedQueue[itemIndex].markdown = markdownContent;
       const relativeSubpath = updatedQueue[itemIndex].relativePathDir ? `${updatedQueue[itemIndex].relativePathDir}/` : '';
-      updatedQueue[itemIndex].savedPath = `${parentHandle.name}/${targetFolderName}/${relativeSubpath}${targetFilename}`;
+      updatedQueue[itemIndex].savedPath = `${parentHandle.name}/${targetFolderName}/${relativeSubpath}${finalFilename}`;
     } catch (err) {
       updatedQueue[itemIndex].status = 'error';
       updatedQueue[itemIndex].errorMsg = err.message || 'Unknown conversion error';
@@ -298,6 +311,8 @@ export default function App() {
     const i = Math.floor(Math.log(bytes) / Math.log(k));
     return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
   };
+
+  const hasEmlFiles = queue.some(item => item.name.toLowerCase().endsWith('.eml'));
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans">
@@ -381,63 +396,82 @@ export default function App() {
               </button>
             )}
 
-            {/* Output Strategy Section */}
+            {/* Output Strategy & Configuration Section */}
             {directoryHandle && (
-              <div className="border-t border-slate-800/80 pt-4 mt-1 flex flex-col gap-3">
-                <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Output Strategy</label>
-                <div className="grid grid-cols-2 gap-4">
-                  <button
-                    onClick={() => setOutputStrategy('inplace')}
-                    disabled={isProcessing}
-                    className={`p-3 rounded-xl border text-left flex flex-col gap-1 transition ${
-                      outputStrategy === 'inplace'
-                        ? 'border-violet-500 bg-violet-950/10'
-                        : 'border-slate-800 bg-slate-950/40 hover:border-slate-700'
-                    }`}
-                  >
-                    <span className="text-xs font-bold text-slate-200">In-Place (md/)</span>
-                    <span className="text-[10px] text-slate-500">Save `md/` folder inside source folder</span>
-                  </button>
-                  <button
-                    onClick={() => setOutputStrategy('custom')}
-                    disabled={isProcessing}
-                    className={`p-3 rounded-xl border text-left flex flex-col gap-1 transition ${
-                      outputStrategy === 'custom'
-                        ? 'border-violet-500 bg-violet-950/10'
-                        : 'border-slate-800 bg-slate-950/40 hover:border-slate-700'
-                    }`}
-                  >
-                    <span className="text-xs font-bold text-slate-200">Custom Destination (md_convert/)</span>
-                    <span className="text-[10px] text-slate-500">Save `md_convert/` folder in chosen folder</span>
-                  </button>
-                </div>
+              <div className="border-t border-slate-800/80 pt-4 mt-1 flex flex-col gap-4">
+                <div className="flex flex-col gap-3">
+                  <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Output Strategy</label>
+                  <div className="grid grid-cols-2 gap-4">
+                    <button
+                      onClick={() => setOutputStrategy('inplace')}
+                      disabled={isProcessing}
+                      className={`p-3 rounded-xl border text-left flex flex-col gap-1 transition ${
+                        outputStrategy === 'inplace'
+                          ? 'border-violet-500 bg-violet-950/10'
+                          : 'border-slate-800 bg-slate-950/40 hover:border-slate-700'
+                      }`}
+                    >
+                      <span className="text-xs font-bold text-slate-200">In-Place (md/)</span>
+                      <span className="text-[10px] text-slate-500">Save `md/` folder inside source folder</span>
+                    </button>
+                    <button
+                      onClick={() => setOutputStrategy('custom')}
+                      disabled={isProcessing}
+                      className={`p-3 rounded-xl border text-left flex flex-col gap-1 transition ${
+                        outputStrategy === 'custom'
+                          ? 'border-violet-500 bg-violet-950/10'
+                          : 'border-slate-800 bg-slate-950/40 hover:border-slate-700'
+                      }`}
+                    >
+                      <span className="text-xs font-bold text-slate-200">Custom Destination (md_convert/)</span>
+                      <span className="text-[10px] text-slate-500">Save `md_convert/` folder in chosen folder</span>
+                    </button>
+                  </div>
 
-                {outputStrategy === 'custom' && (
-                  <div className="mt-2 flex flex-col gap-2">
-                    <label className="text-[11px] font-semibold text-slate-400">Select Top-Level Output Folder:</label>
-                    {outputDirectoryHandle ? (
-                      <div className="bg-slate-950/80 border border-slate-800 rounded-xl p-3 flex items-center justify-between">
-                        <span className="text-xs font-mono text-slate-300 truncate max-w-[250px]">{outputDirectoryHandle.name}</span>
+                  {outputStrategy === 'custom' && (
+                    <div className="mt-2 flex flex-col gap-2">
+                      <label className="text-[11px] font-semibold text-slate-400">Select Top-Level Output Folder:</label>
+                      {outputDirectoryHandle ? (
+                        <div className="bg-slate-950/80 border border-slate-800 rounded-xl p-3 flex items-center justify-between">
+                          <span className="text-xs font-mono text-slate-300 truncate max-w-[250px]">{outputDirectoryHandle.name}</span>
+                          <button
+                            onClick={selectOutputFolder}
+                            disabled={isProcessing}
+                            className="px-2.5 py-1 bg-slate-900 hover:bg-slate-800 border border-slate-850 text-slate-300 text-[10px] font-bold rounded-lg transition"
+                          >
+                            Change
+                          </button>
+                        </div>
+                      ) : (
                         <button
                           onClick={selectOutputFolder}
                           disabled={isProcessing}
-                          className="px-2.5 py-1 bg-slate-900 hover:bg-slate-800 border border-slate-850 text-slate-350 text-[10px] font-bold rounded-lg transition"
+                          className="w-full py-3 border border-dashed border-slate-800 hover:border-violet-500/50 rounded-xl bg-slate-950/20 hover:bg-slate-950/40 transition text-slate-400 text-xs font-bold flex items-center justify-center gap-2"
                         >
-                          Change
+                          <svg className="w-4 h-4 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3m0 0v3m0-3h3m-3 0H9m12 0a9 9 0 11-18 0 9 9 0 0118 0z" />
+                          </svg>
+                          Choose Top-Level Destination Folder
                         </button>
-                      </div>
-                    ) : (
-                      <button
-                        onClick={selectOutputFolder}
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* Email Naming Options Toggle */}
+                {hasEmlFiles && (
+                  <div className="border-t border-slate-900 pt-3 flex flex-col gap-2.5">
+                    <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Email Naming Options</label>
+                    <label className="flex items-center gap-3 cursor-pointer text-xs text-slate-300 hover:text-slate-100 transition">
+                      <input
+                        type="checkbox"
+                        checked={renameEml}
+                        onChange={(e) => setRenameEml(e.target.checked)}
                         disabled={isProcessing}
-                        className="w-full py-3 border border-dashed border-slate-800 hover:border-violet-500/50 rounded-xl bg-slate-950/20 hover:bg-slate-950/40 transition text-slate-400 text-xs font-bold flex items-center justify-center gap-2"
-                      >
-                        <svg className="w-4 h-4 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3m0 0v3m0-3h3m-3 0H9m12 0a9 9 0 11-18 0 9 9 0 0118 0z" />
-                        </svg>
-                        Choose Top-Level Destination Folder
-                      </button>
-                    )}
+                        className="h-4.5 w-4.5 accent-violet-600 rounded bg-slate-950 border-slate-850 focus:ring-violet-500 transition"
+                      />
+                      <span>Use email <strong>Subject</strong> (or body keywords if empty) as the output filename (for EML files)</span>
+                    </label>
                   </div>
                 )}
               </div>
@@ -509,6 +543,11 @@ export default function App() {
                   <div className="flex-1 overflow-y-auto max-h-[350px] border border-slate-850 bg-slate-950/20 rounded-xl divide-y divide-slate-900">
                     {queue.map((item) => {
                       const isSelected = item.id === selectedId;
+                      // Display target filename once converted or fall back to original EML name
+                      const displayedName = (item.status === 'success' && item.savedPath)
+                        ? item.savedPath.substring(item.savedPath.lastIndexOf('/') + 1)
+                        : item.name;
+                      
                       return (
                         <div
                           key={item.id}
@@ -537,7 +576,7 @@ export default function App() {
                             </div>
                             <div className="min-w-0 flex flex-col gap-0.5">
                               <div className="flex items-center gap-2 min-w-0">
-                                <span className="font-semibold text-slate-200 truncate">{item.name}</span>
+                                <span className="font-semibold text-slate-200 truncate">{displayedName}</span>
                                 <span className="shrink-0 px-1.5 py-0.5 bg-slate-900 border border-slate-800 text-[9px] font-extrabold text-violet-400 rounded-md uppercase tracking-wider">
                                   {item.name.substring(item.name.lastIndexOf('.') + 1)}
                                 </span>
@@ -620,7 +659,11 @@ export default function App() {
             {selectedItem ? (
               <div className="flex-1 flex flex-col min-h-0">
                 <div className="mb-4 shrink-0">
-                  <div className="text-sm font-bold text-slate-200 truncate">{selectedItem.name}</div>
+                  <div className="text-sm font-bold text-slate-200 truncate">
+                    {(selectedItem.status === 'success' && selectedItem.savedPath)
+                      ? selectedItem.savedPath.substring(selectedItem.savedPath.lastIndexOf('/') + 1)
+                      : selectedItem.name}
+                  </div>
                   {selectedItem.savedPath && (
                     <div className="text-xs text-slate-400 mt-1 font-mono break-all flex items-center gap-1">
                       <svg className="w-3.5 h-3.5 text-violet-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
